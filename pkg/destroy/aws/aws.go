@@ -132,14 +132,6 @@ func (o *ClusterUninstaller) RunWithContext(ctx context.Context) ([]string, erro
 		resourcegroupstaggingapi.New(awsSession),
 	}
 
-	if o.HostedZoneRole != "" {
-		cfg := awssession.GetR53ClientCfg(awsSession, o.HostedZoneRole)
-		// This client is specifically for finding route53 zones,
-		// so it needs to use the global us-east-1 region.
-		cfg.Region = aws.String(endpoints.UsEast1RegionID)
-		tagClients = append(tagClients, resourcegroupstaggingapi.New(awsSession, cfg))
-	}
-
 	switch o.Region {
 	case endpoints.CnNorth1RegionID, endpoints.CnNorthwest1RegionID:
 		break

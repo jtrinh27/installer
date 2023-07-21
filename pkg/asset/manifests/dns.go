@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
-	"strings"
 
 	"github.com/pkg/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -13,7 +12,6 @@ import (
 	configv1 "github.com/openshift/api/config/v1"
 	"github.com/openshift/installer/pkg/asset"
 	"github.com/openshift/installer/pkg/asset/installconfig"
-	icaws "github.com/openshift/installer/pkg/asset/installconfig/aws"
 	icgcp "github.com/openshift/installer/pkg/asset/installconfig/gcp"
 	icibmcloud "github.com/openshift/installer/pkg/asset/installconfig/ibmcloud"
 	icpowervs "github.com/openshift/installer/pkg/asset/installconfig/powervs"
@@ -102,23 +100,12 @@ func (d *DNS) Generate(dependencies asset.Parents) error {
 		}
 	case awstypes.Name:
 		if installConfig.Config.Publish == types.ExternalPublishingStrategy {
-			sess, err := installConfig.AWS.Session(context.TODO())
-			if err != nil {
-				return errors.Wrap(err, "failed to initialize session")
-			}
-			zone, err := icaws.GetPublicZone(sess, installConfig.Config.BaseDomain)
-			if err != nil {
-				return errors.Wrapf(err, "getting public zone for %q", installConfig.Config.BaseDomain)
-			}
-			config.Spec.PublicZone = &configv1.DNSZone{ID: strings.TrimPrefix(*zone.Id, "/hostedzone/")}
+			config.Spec.PublicZone = nil
 		}
 		if hostedZone := installConfig.Config.AWS.HostedZone; hostedZone == "" {
-			config.Spec.PrivateZone = &configv1.DNSZone{Tags: map[string]string{
-				fmt.Sprintf("kubernetes.io/cluster/%s", clusterID.InfraID): "owned",
-				"Name": fmt.Sprintf("%s-int", clusterID.InfraID),
-			}}
+			config.Spec.PrivateZone = nil
 		} else {
-			config.Spec.PrivateZone = &configv1.DNSZone{ID: hostedZone}
+			config.Spec.PrivateZone = nil
 
 			if r := installConfig.Config.AWS.HostedZoneRole; r != "" {
 				config.Spec.Platform = configv1.DNSPlatformSpec{

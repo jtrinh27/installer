@@ -12,7 +12,6 @@ import (
 	"github.com/aws/aws-sdk-go/aws/endpoints"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/ec2"
-	"github.com/aws/aws-sdk-go/service/route53"
 	"github.com/pkg/errors"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -399,7 +398,6 @@ var requiredServices = []string{
 	"ec2",
 	"elasticloadbalancing",
 	"iam",
-	"route53",
 	"s3",
 	"sts",
 	"tagging",
@@ -407,77 +405,5 @@ var requiredServices = []string{
 
 // ValidateForProvisioning validates if the install config is valid for provisioning the cluster.
 func ValidateForProvisioning(client API, ic *types.InstallConfig, metadata *Metadata) error {
-	if ic.Publish == types.InternalPublishingStrategy && ic.AWS.HostedZone == "" {
-		return nil
-	}
-
-	var zoneName string
-	var zonePath *field.Path
-	var zone *route53.HostedZone
-
-	allErrs := field.ErrorList{}
-	r53cfg := GetR53ClientCfg(metadata.session, ic.AWS.HostedZoneRole)
-
-	if ic.AWS.HostedZone != "" {
-		zoneName = ic.AWS.HostedZone
-		zonePath = field.NewPath("aws", "hostedZone")
-		zoneOutput, err := client.GetHostedZone(zoneName, r53cfg)
-		if err != nil {
-			errMsg := errors.Wrapf(err, "unable to retrieve hosted zone").Error()
-			return field.ErrorList{
-				field.Invalid(zonePath, zoneName, errMsg),
-			}.ToAggregate()
-		}
-
-		if errs := validateHostedZone(zoneOutput, zonePath, zoneName, metadata); len(errs) > 0 {
-			allErrs = append(allErrs, errs...)
-		}
-
-		zone = zoneOutput.HostedZone
-	} else {
-		zoneName = ic.BaseDomain
-		zonePath = field.NewPath("baseDomain")
-		baseDomainOutput, err := client.GetBaseDomain(zoneName)
-		if err != nil {
-			return field.ErrorList{
-				field.Invalid(zonePath, zoneName, "cannot find base domain"),
-			}.ToAggregate()
-		}
-
-		zone = baseDomainOutput
-	}
-
-	if errs := client.ValidateZoneRecords(zone, zoneName, zonePath, ic, r53cfg); len(errs) > 0 {
-		allErrs = append(allErrs, errs...)
-	}
-
-	return allErrs.ToAggregate()
-}
-
-func validateHostedZone(hostedZoneOutput *route53.GetHostedZoneOutput, hostedZonePath *field.Path, hostedZoneName string, metadata *Metadata) field.ErrorList {
-	allErrs := field.ErrorList{}
-
-	// validate that the hosted zone is associated with the VPC containing the existing subnets for the cluster
-	vpcID, err := metadata.VPC(context.TODO())
-	if err == nil {
-		if !isHostedZoneAssociatedWithVPC(hostedZoneOutput, vpcID) {
-			allErrs = append(allErrs, field.Invalid(hostedZonePath, hostedZoneName, "hosted zone is not associated with the VPC"))
-		}
-	} else {
-		allErrs = append(allErrs, field.Invalid(hostedZonePath, hostedZoneName, "no VPC found"))
-	}
-
-	return allErrs
-}
-
-func isHostedZoneAssociatedWithVPC(hostedZone *route53.GetHostedZoneOutput, vpcID string) bool {
-	if vpcID == "" {
-		return false
-	}
-	for _, vpc := range hostedZone.VPCs {
-		if aws.StringValue(vpc.VPCId) == vpcID {
-			return true
-		}
-	}
-	return false
+	return nil
 }

@@ -7,11 +7,9 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/ec2"
-	"github.com/aws/aws-sdk-go/service/route53"
 	"github.com/pkg/errors"
 
 	"github.com/openshift/installer/pkg/asset/installconfig"
-	awsic "github.com/openshift/installer/pkg/asset/installconfig/aws"
 	"github.com/openshift/installer/pkg/types"
 	awstypes "github.com/openshift/installer/pkg/types/aws"
 )
@@ -78,18 +76,6 @@ func tagSharedVPCResources(ctx context.Context, clusterID string, installConfig 
 		Tags:      []*ec2.Tag{{Key: &tagKey, Value: &tagValue}},
 	}); err != nil {
 		return errors.Wrap(err, "could not add tags to subnets")
-	}
-
-	if zone := installConfig.Config.AWS.HostedZone; zone != "" {
-		r53cfg := awsic.GetR53ClientCfg(session, installConfig.Config.AWS.HostedZoneRole)
-		route53Client := route53.New(session, r53cfg)
-		if _, err := route53Client.ChangeTagsForResourceWithContext(ctx, &route53.ChangeTagsForResourceInput{
-			ResourceType: aws.String("hostedzone"),
-			ResourceId:   aws.String(zone),
-			AddTags:      []*route53.Tag{{Key: &tagKey, Value: &tagValue}},
-		}); err != nil {
-			return errors.Wrap(err, "could not add tags to hosted zone")
-		}
 	}
 
 	return nil
