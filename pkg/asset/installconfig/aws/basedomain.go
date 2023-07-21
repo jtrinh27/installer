@@ -4,7 +4,6 @@ import (
 	"net/http"
 
 	"github.com/aws/aws-sdk-go/aws/awserr"
-	"github.com/aws/aws-sdk-go/aws/session"
 )
 
 // IsForbidden returns true if and only if the input error is an HTTP
@@ -17,10 +16,5 @@ func IsForbidden(err error) bool {
 // GetBaseDomain returns a base domain chosen from among the account's
 // public routes.
 func GetBaseDomain() (string, error) {
-	return "sd.spawar.navy.mil", nil
-}
-
-// GetPublicZone returns a public route53 zone that matches the name.
-func GetPublicZone(sess *session.Session, name string) (string, error) {
 	return "sd.spawar.navy.mil", nil
 }
