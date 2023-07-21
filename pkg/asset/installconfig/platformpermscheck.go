@@ -78,16 +78,6 @@ func (a *PlatformPermsCheck) Generate(dependencies asset.Parents) error {
 				permissionGroups = append(permissionGroups, awsconfig.PermissionDeleteHostedZone)
 			}
 		}
-
-		ssn, err := ic.AWS.Session(ctx)
-		if err != nil {
-			return err
-		}
-
-		err = awsconfig.ValidateCreds(ssn, permissionGroups, ic.Config.Platform.AWS.Region)
-		if err != nil {
-			return errors.Wrap(err, "validate AWS credentials")
-		}
 	case gcp.Name:
 		client, err := gcpconfig.NewClient(context.TODO())
 		if err != nil {
