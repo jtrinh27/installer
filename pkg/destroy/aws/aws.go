@@ -16,7 +16,6 @@ import (
 	"github.com/aws/aws-sdk-go/service/efs"
 	"github.com/aws/aws-sdk-go/service/iam"
 	"github.com/aws/aws-sdk-go/service/resourcegroupstaggingapi"
-	"github.com/aws/aws-sdk-go/service/route53"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 	"github.com/pkg/errors"
@@ -432,87 +431,6 @@ func tagMatch(filters []Filter, tags map[string]string) bool {
 	return len(filters) == 0
 }
 
-// getPublicHostedZone will find the ID of the non-Terraform-managed public route53 zone given the
-// Terraform-managed zone's privateID.
-func getPublicHostedZone(ctx context.Context, client *route53.Route53, privateID string, logger logrus.FieldLogger) (string, error) {
-	response, err := client.GetHostedZoneWithContext(ctx, &route53.GetHostedZoneInput{
-		Id: aws.String(privateID),
-	})
-	if err != nil {
-		return "", err
-	}
-
-	privateName := *response.HostedZone.Name
-
-	if response.HostedZone.Config != nil && response.HostedZone.Config.PrivateZone != nil {
-		if !*response.HostedZone.Config.PrivateZone {
-			return "", errors.Errorf("getPublicHostedZone requires a private ID, but was passed the public %s", privateID)
-		}
-	} else {
-		logger.WithField("hosted zone", privateName).Warn("could not determine whether hosted zone is private")
-	}
-
-	return findAncestorPublicRoute53(ctx, client, privateName, logger)
-}
-
-// findAncestorPublicRoute53 finds a public route53 zone with the closest ancestor or match to dnsName.
-// It returns "", when no public route53 zone could be found.
-func findAncestorPublicRoute53(ctx context.Context, client *route53.Route53, dnsName string, logger logrus.FieldLogger) (string, error) {
-	for len(dnsName) > 0 {
-		sZone, err := findPublicRoute53(ctx, client, dnsName, logger)
-		if err != nil {
-			return "", err
-		}
-		if sZone != "" {
-			return sZone, nil
-		}
-
-		idx := strings.Index(dnsName, ".")
-		if idx == -1 {
-			break
-		}
-		dnsName = dnsName[idx+1:]
-	}
-	return "", nil
-}
-
-// findPublicRoute53 finds a public route53 zone matching the dnsName.
-// It returns "", when no public route53 zone could be found.
-func findPublicRoute53(ctx context.Context, client *route53.Route53, dnsName string, logger logrus.FieldLogger) (string, error) {
-	request := &route53.ListHostedZonesByNameInput{
-		DNSName: aws.String(dnsName),
-	}
-	for i := 0; true; i++ {
-		logger.Debugf("listing AWS hosted zones %q (page %d)", dnsName, i)
-		list, err := client.ListHostedZonesByNameWithContext(ctx, request)
-		if err != nil {
-			return "", err
-		}
-
-		for _, zone := range list.HostedZones {
-			if *zone.Name != dnsName {
-				// No name after this can match dnsName
-				return "", nil
-			}
-			if zone.Config == nil || zone.Config.PrivateZone == nil {
-				logger.WithField("hosted zone", *zone.Name).Warn("could not determine whether hosted zone is private")
-				continue
-			}
-			if !*zone.Config.PrivateZone {
-				return *zone.Id, nil
-			}
-		}
-
-		if *list.IsTruncated && *list.NextDNSName == *request.DNSName {
-			request.HostedZoneId = list.NextHostedZoneId
-			continue
-		}
-
-		break
-	}
-	return "", nil
-}
-
 func deleteARN(ctx context.Context, session *session.Session, arn arn.ARN, logger logrus.FieldLogger) error {
 	switch arn.Service {
 	case "ec2":
@@ -521,8 +439,6 @@ func deleteARN(ctx context.Context, session *session.Session, arn arn.ARN, logge
 		return deleteElasticLoadBalancing(ctx, session, arn, logger)
 	case "iam":
 		return deleteIAM(ctx, session, arn, logger)
-	case "route53":
-		return deleteRoute53(ctx, session, arn, logger)
 	case "s3":
 		return deleteS3(ctx, session, arn, logger)
 	case "elasticfilesystem":
@@ -530,133 +446,6 @@ func deleteARN(ctx context.Context, session *session.Session, arn arn.ARN, logge
 	default:
 		return errors.Errorf("unrecognized ARN service %s (%s)", arn.Service, arn)
 	}
-}
-
-func deleteRoute53(ctx context.Context, session *session.Session, arn arn.ARN, logger logrus.FieldLogger) error {
-	resourceType, id, err := splitSlash("resource", arn.Resource)
-	if err != nil {
-		return err
-	}
-	logger = logger.WithField("id", id)
-
-	if resourceType != "hostedzone" {
-		return errors.Errorf("unrecognized Route 53 resource type %s", resourceType)
-	}
-
-	client := route53.New(session)
-
-	publicZoneID, err := getPublicHostedZone(ctx, client, id, logger)
-	if err != nil {
-		// In some cases AWS may return the zone in the list of tagged resources despite the fact
-		// it no longer exists.
-		if err.(awserr.Error).Code() == route53.ErrCodeNoSuchHostedZone {
-			return nil
-		}
-		return err
-	}
-
-	recordSetKey := func(recordSet *route53.ResourceRecordSet) string {
-		return fmt.Sprintf("%s %s", *recordSet.Type, *recordSet.Name)
-	}
-
-	publicEntries := map[string]*route53.ResourceRecordSet{}
-	if len(publicZoneID) != 0 {
-		err = client.ListResourceRecordSetsPagesWithContext(
-			ctx,
-			&route53.ListResourceRecordSetsInput{HostedZoneId: aws.String(publicZoneID)},
-			func(results *route53.ListResourceRecordSetsOutput, lastPage bool) bool {
-				for _, recordSet := range results.ResourceRecordSets {
-					key := recordSetKey(recordSet)
-					publicEntries[key] = recordSet
-				}
-
-				return !lastPage
-			},
-		)
-		if err != nil {
-			return err
-		}
-	} else {
-		logger.Debug("shared public zone not found")
-	}
-
-	var lastError error
-	err = client.ListResourceRecordSetsPagesWithContext(
-		ctx,
-		&route53.ListResourceRecordSetsInput{HostedZoneId: aws.String(id)},
-		func(results *route53.ListResourceRecordSetsOutput, lastPage bool) bool {
-			for _, recordSet := range results.ResourceRecordSets {
-				if *recordSet.Type == "SOA" || *recordSet.Type == "NS" {
-					// can't delete SOA and NS types
-					continue
-				}
-				key := recordSetKey(recordSet)
-				if publicEntry, ok := publicEntries[key]; ok {
-					err := deleteRoute53RecordSet(ctx, client, publicZoneID, publicEntry, logger.WithField("public zone", publicZoneID))
-					if err != nil {
-						if lastError != nil {
-							logger.Debug(lastError)
-						}
-						lastError = errors.Wrapf(err, "deleting record set %#v from public zone %s", publicEntry, publicZoneID)
-					}
-					// do not delete the record set in the private zone if the delete failed in the public zone;
-					// otherwise the record set in the public zone will get leaked
-					continue
-				}
-
-				err = deleteRoute53RecordSet(ctx, client, id, recordSet, logger)
-				if err != nil {
-					if lastError != nil {
-						logger.Debug(lastError)
-					}
-					lastError = errors.Wrapf(err, "deleting record set %#+v from zone %s", recordSet, id)
-				}
-			}
-
-			return !lastPage
-		},
-	)
-
-	if lastError != nil {
-		return lastError
-	}
-	if err != nil {
-		return err
-	}
-
-	_, err = client.DeleteHostedZoneWithContext(ctx, &route53.DeleteHostedZoneInput{
-		Id: aws.String(id),
-	})
-	if err != nil {
-		if err.(awserr.Error).Code() == "NoSuchHostedZone" {
-			return nil
-		}
-		return err
-	}
-
-	logger.Info("Deleted")
-	return nil
-}
-
-func deleteRoute53RecordSet(ctx context.Context, client *route53.Route53, zoneID string, recordSet *route53.ResourceRecordSet, logger logrus.FieldLogger) error {
-	logger = logger.WithField("record set", fmt.Sprintf("%s %s", *recordSet.Type, *recordSet.Name))
-	_, err := client.ChangeResourceRecordSetsWithContext(ctx, &route53.ChangeResourceRecordSetsInput{
-		HostedZoneId: aws.String(zoneID),
-		ChangeBatch: &route53.ChangeBatch{
-			Changes: []*route53.Change{
-				{
-					Action:            aws.String("DELETE"),
-					ResourceRecordSet: recordSet,
-				},
-			},
-		},
-	})
-	if err != nil {
-		return err
-	}
-
-	logger.Info("Deleted")
-	return nil
 }
 
 func deleteS3(ctx context.Context, session *session.Session, arn arn.ARN, logger logrus.FieldLogger) error {

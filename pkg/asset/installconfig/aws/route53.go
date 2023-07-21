@@ -6,8 +6,6 @@ import (
 	awss "github.com/aws/aws-sdk-go/aws/session"
 )
 
-//go:generate mockgen -source=./route53.go -destination=mock/awsroute53_generated.go -package=mock
-
 // API represents the calls made to the API.
 type API interface {
 }
