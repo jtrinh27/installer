@@ -34,7 +34,6 @@ provider "aws" {
     ec2     = lookup(var.custom_endpoints, "ec2", null)
     elb     = lookup(var.custom_endpoints, "elasticloadbalancing", null)
     iam     = lookup(var.custom_endpoints, "iam", null)
-    route53 = lookup(var.custom_endpoints, "route53", null)
     s3      = lookup(var.custom_endpoints, "s3", null)
     sts     = lookup(var.custom_endpoints, "sts", null)
   }
